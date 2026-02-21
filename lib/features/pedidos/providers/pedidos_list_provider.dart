@@ -1,5 +1,3 @@
-
-
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -9,27 +7,25 @@ import 'package:tarea_bimestre/core/network/dio_client.dart';
 import 'package:tarea_bimestre/features/pedido/models/pedido_local_model.dart';
 
 class PedidosListProvider extends ChangeNotifier {
-  List<PedidoLocalModel> _pedidos       = [];
-  bool                   _isLoading     = false;
-  bool                   _isSyncing     = false;
-  String                 _syncMsg       = '';
+  List<PedidoLocalModel> _pedidos   = [];
+  bool   _isLoading                 = false;
+  bool   _isSyncing                 = false;
+  String _syncMsg                   = '';
 
-  List<PedidoLocalModel> get pedidos    => _pedidos;
-  bool                   get isLoading  => _isLoading;
-  bool                   get isSyncing  => _isSyncing;
-  String                 get syncMsg    => _syncMsg;
+  List<PedidoLocalModel> get pedidos   => _pedidos;
+  bool   get isLoading                 => _isLoading;
+  bool   get isSyncing                 => _isSyncing;
+  String get syncMsg                   => _syncMsg;
 
   int get totalPendientes =>
       _pedidos.where((p) => p.estado == EstadoPedido.pendiente).length;
 
-  // ── Cargar todos los pedidos desde SQLite ─────────────────────────────────
+  // ── Cargar desde SQLite ───────────────────────────────────────────────────
   Future<void> cargarPedidos() async {
     _isLoading = true;
     notifyListeners();
-
     final rows = await DatabaseHelper.instance.obtenerPedidos();
     _pedidos   = rows.map(PedidoLocalModel.fromDb).toList();
-
     _isLoading = false;
     notifyListeners();
   }
@@ -56,18 +52,27 @@ class PedidosListProvider extends ChangeNotifier {
     int fallidos = 0;
 
     for (final pedido in pendientes) {
-      final ok = await _enviarPedido(pedido);
-      if (ok) { exitosos++; } else { fallidos++; }
+      final idFactura = await _enviarPedido(pedido);
+      if (idFactura != null) {
+        exitosos++;
+        if (pedido.fotoPath != null) {
+          await _enviarFoto(
+              idFactura: idFactura,
+              fotoPath:  pedido.fotoPath!,
+              latitud:   pedido.latitud,
+              longitud:  pedido.longitud);
+        }
+      } else {
+        fallidos++;
+      }
     }
 
-    // Recargar lista desde SQLite con estados actualizados
     await cargarPedidos();
 
-    _isSyncing = true; // mantener true hasta asignar mensaje
     if (exitosos > 0 && fallidos == 0) {
       _syncMsg = '✅ $exitosos ${exitosos == 1 ? "pedido sincronizado" : "pedidos sincronizados"} correctamente.';
     } else if (exitosos > 0 && fallidos > 0) {
-      _syncMsg = '⚠️ $exitosos sincronizados, $fallidos con error.';
+      _syncMsg = '⚠️ $exitosos sincronizados, $fallidos con problemas.';
     } else {
       _syncMsg = '❌ No se pudo sincronizar. Verifica tu conexión.';
     }
@@ -76,20 +81,11 @@ class PedidosListProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Enviar un pedido a la API ─────────────────────────────────────────────
-  Future<bool> _enviarPedido(PedidoLocalModel pedido) async {
+  // ── Enviar pedido a la API (sin foto) ────────────────────────────────────
+  Future<int?> _enviarPedido(PedidoLocalModel pedido) async {
     try {
-      // Convertir foto a base64 si existe y el archivo sigue en disco
-      String? fotoBase64;
-      if (pedido.fotoPath != null) {
-        final file = File(pedido.fotoPath!);
-        if (await file.exists()) {
-          final bytes = await file.readAsBytes();
-          fotoBase64 = 'data:image/jpeg;base64,${base64Encode(bytes)}';
-        }
-      }
-
       final body = <String, dynamic>{
+        'idCliente':     pedido.idCliente,
         'nombreCliente': pedido.nombreCliente,
         'cedula':        pedido.cedula,
         'direccion':     pedido.direccion,
@@ -100,12 +96,10 @@ class PedidosListProvider extends ChangeNotifier {
         'descuento':     pedido.descuento,
       };
 
-      if (pedido.idCliente   != null) body['idCliente']     = pedido.idCliente;
       if (pedido.observaciones != null && pedido.observaciones!.isNotEmpty)
-                                       body['observaciones'] = pedido.observaciones;
-      if (pedido.latitud     != null)  body['latitud']       = pedido.latitud;
-      if (pedido.longitud    != null)  body['longitud']      = pedido.longitud;
-      if (fotoBase64         != null)  body['fotoBase64']    = fotoBase64;
+        body['observaciones'] = pedido.observaciones;
+      if (pedido.latitud  != null) body['latitud']  = pedido.latitud;
+      if (pedido.longitud != null) body['longitud'] = pedido.longitud;
 
       final response = await DioClient.instance
           .post('facturacion/directa', data: body)
@@ -114,25 +108,54 @@ class PedidosListProvider extends ChangeNotifier {
       if (response.statusCode == 200 || response.statusCode == 201) {
         await DatabaseHelper.instance.actualizarEstado(
             pedido.id!, EstadoPedido.sincronizado.valor);
-        return true;
+        final id = response.data['id'] ??
+                   response.data['idFactura'] ??
+                   response.data['data']?['id'];
+        return id as int?;
       } else {
         final msg = response.data?['message']?.toString() ??
             'Error ${response.statusCode}';
         await DatabaseHelper.instance.actualizarEstado(
             pedido.id!, EstadoPedido.error.valor, errorMsg: msg);
-        return false;
+        return null;
       }
     } on DioException catch (e) {
       final msg = e.type == DioExceptionType.connectionError
           ? 'Sin conexión a internet'
-          : 'Error de red: ${e.message}';
+          : 'Error: ${e.message}';
       await DatabaseHelper.instance.actualizarEstado(
           pedido.id!, EstadoPedido.error.valor, errorMsg: msg);
-      return false;
+      return null;
     } catch (e) {
       await DatabaseHelper.instance.actualizarEstado(
           pedido.id!, EstadoPedido.error.valor, errorMsg: e.toString());
-      return false;
+      return null;
+    }
+  }
+
+  // ── Enviar foto por separado al endpoint PATCH ────────────────────────────
+  Future<void> _enviarFoto({
+    required int     idFactura,
+    required String  fotoPath,
+    required double? latitud,
+    required double? longitud,
+  }) async {
+    try {
+      final file = File(fotoPath);
+      if (!await file.exists()) return;
+
+      final bytes      = await file.readAsBytes();
+      final fotoBase64 = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+
+      final body = <String, dynamic>{'fotoBase64': fotoBase64};
+      if (latitud  != null) body['latitud']  = latitud;
+      if (longitud != null) body['longitud'] = longitud;
+
+      await DioClient.instance
+          .patch('facturacion/$idFactura/evidencia', data: body)
+          .timeout(const Duration(seconds: 30));
+    } catch (_) {
+      // Si falla la foto no bloqueamos el flujo principal
     }
   }
 

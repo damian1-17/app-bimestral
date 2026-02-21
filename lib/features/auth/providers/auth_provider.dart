@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
+import 'package:tarea_bimestre/core/database/database_helper.dart';
 import 'package:tarea_bimestre/core/network/dio_client.dart';
 import 'package:tarea_bimestre/core/services/session_service.dart';
+import 'package:tarea_bimestre/core/services/sync_service.dart';
 import 'package:tarea_bimestre/features/auth/models/user_model.dart';
 
 enum AuthStatus { unknown, authenticated, unauthenticated }
@@ -27,40 +29,22 @@ class AuthProvider extends ChangeNotifier {
       return;
     }
 
-    // Cargar usuario local inmediatamente
-    _user = await SessionService.getUser();
-
-    // Verificar con el servidor (con timeout corto para no bloquear)
-    try {
-      final response = await DioClient.instance
-          .get('auth/check')
-          .timeout(const Duration(seconds: 8));
-
-      if (response.statusCode == 200 &&
-          response.data['authenticated'] == true) {
-        _status = AuthStatus.authenticated;
-      } else {
-        await _clearLocalSession();
-        return;
-      }
-    } catch (_) {
-      // Sin red o timeout → confiar en sesión local (modo offline)
-      _status = AuthStatus.authenticated;
-    }
-
+    // Cargar usuario desde SharedPreferences
+    _user   = await SessionService.getUser();
+    _status = AuthStatus.authenticated;
     notifyListeners();
   }
 
   // ── Login ─────────────────────────────────────────────────────────────────
-  Future<bool> login(String email, String password) async {
+  Future<bool> login(String email, String password, {SyncService? syncService}) async {
     _setLoading(true);
     _errorMessage = null;
 
+    // 1. Intentar login online
     try {
-      final response = await DioClient.instance.post(
-        'auth/login',
-        data: {'email': email, 'password': password},
-      );
+      final response = await DioClient.instance
+          .post('auth/login', data: {'email': email, 'password': password})
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final userData = response.data['user'];
@@ -70,16 +54,31 @@ class AuthProvider extends ChangeNotifier {
         }
 
         final user = UserModel.fromJson(userData as Map<String, dynamic>);
-
         if (!user.isActive) {
           _setError('Tu cuenta está inactiva. Contacta al administrador.');
           return false;
         }
 
+        // Guardar sesión
         await SessionService.saveSession(user);
+        await DatabaseHelper.instance.guardarUsuario({
+          'idUsuario': user.idUsuario,
+          'nombre':    user.nombre,
+          'cedula':    user.cedula,
+          'email':     user.email,
+          'estado':    user.estado,
+          'roles':     user.roles.join(','),
+        });
+
         _user   = user;
         _status = AuthStatus.authenticated;
         notifyListeners();
+
+        // Sincronizar productos en segundo plano (login online = primera sync)
+        if (syncService != null) {
+          syncService.sincronizarProductos();
+        }
+
         return true;
 
       } else if (response.statusCode == 401) {
@@ -92,21 +91,52 @@ class AuthProvider extends ChangeNotifier {
         _setError('Error ${response.statusCode}. Intenta nuevamente.');
       }
 
+      return false;
+
     } on DioException catch (e) {
-      if (e.type == DioExceptionType.connectionTimeout ||
+      // Sin red — intentar login offline
+      if (e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.connectionTimeout ||
           e.type == DioExceptionType.receiveTimeout) {
-        _setError('Tiempo de espera agotado. Verifica tu conexión.');
-      } else if (e.type == DioExceptionType.connectionError) {
-        _setError('Sin conexión a internet.');
-      } else {
-        _setError('Error de red: ${e.message}');
+        return await _loginOffline(email);
       }
+      _setError('Error de red: ${e.message}');
+      return false;
     } catch (e) {
+      if (e.toString().contains('TimeoutException')) {
+        return await _loginOffline(email);
+      }
       _setError('Error inesperado: $e');
+      return false;
     } finally {
       _setLoading(false);
     }
+  }
 
+  // ── Login offline: verificar sesión previa guardada ───────────────────────
+  Future<bool> _loginOffline(String email) async {
+    final userData = await DatabaseHelper.instance.obtenerUsuario(email);
+
+    if (userData != null) {
+      final roles = (userData['roles'] as String).split(',');
+      _user = UserModel(
+        idUsuario: userData['idUsuario'] as int,
+        nombre:    userData['nombre']    as String,
+        cedula:    userData['cedula']    as String,
+        email:     userData['email']     as String,
+        estado:    userData['estado']    as String,
+        roles:     roles,
+      );
+
+      await SessionService.saveSession(_user!);
+      _status = AuthStatus.authenticated;
+      notifyListeners();
+
+      _setError('Sin internet — sesión local cargada.');
+      return true;
+    }
+
+    _setError('Sin internet y no hay sesión guardada para este usuario.');
     return false;
   }
 
@@ -136,6 +166,7 @@ class AuthProvider extends ChangeNotifier {
 
   void _setError(String msg) {
     _errorMessage = msg;
+    _isLoading    = false;
     notifyListeners();
   }
 
