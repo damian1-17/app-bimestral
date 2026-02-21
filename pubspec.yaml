@@ -14,17 +14,25 @@ dependencies:
   # Estado
   provider: ^6.1.2
 
-  # HTTP con soporte de cookies
+  # HTTP
   dio: ^5.4.3+1
-  dio_cookie_manager: ^3.1.1
-  cookie_jar: ^4.0.8
 
   # Persistencia local
   shared_preferences: ^2.2.3
+  sqflite: ^2.3.3+1
+  path: ^1.9.0
+
+  # Cámara y galería
+  image_picker: ^1.1.2
+
+  # GPS
+  geolocator: ^13.0.1
+
+  # Permisos
+  permission_handler: ^11.3.1
 
   # Íconos
   cupertino_icons: ^1.0.6
-  flutter_svg: ^2.0.10+1
 
 dev_dependencies:
   flutter_test:
