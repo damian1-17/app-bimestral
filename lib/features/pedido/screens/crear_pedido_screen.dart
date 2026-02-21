@@ -8,9 +8,9 @@ import 'package:tarea_bimestre/core/theme/app_theme.dart';
 import 'package:tarea_bimestre/features/carrito/providers/carrito_provider.dart';
 import 'package:tarea_bimestre/features/clientes/models/cliente_model.dart';
 import 'package:tarea_bimestre/features/clientes/widgets/selector_cliente_widget.dart';
-import 'package:tarea_bimestre/features/pedidos/providers/pedido_provider.dart';
-
-import 'package:tarea_bimestre/features/pedidos/widgets/resumen_carrito_widget.dart';
+import 'package:tarea_bimestre/features/pedido/providers/pedido_provider.dart';
+import 'package:tarea_bimestre/features/pedido/widgets/confirmacion_dialog.dart';
+import 'package:tarea_bimestre/features/pedido/widgets/resumen_carrito_widget.dart';
 
 class CrearPedidoScreen extends StatefulWidget {
   const CrearPedidoScreen({super.key});
@@ -70,7 +70,11 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
 
       final pos = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high);
-      setState(() { _latitud = pos.latitude; _longitud = pos.longitude; _gpsLoading = false; });
+      setState(() {
+        _latitud    = pos.latitude;
+        _longitud   = pos.longitude;
+        _gpsLoading = false;
+      });
     } catch (_) { setState(() => _gpsLoading = false); }
   }
 
@@ -114,7 +118,7 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
     }
   }
 
-  // ── Enviar ────────────────────────────────────────────────────────────────
+  // ── Validar → mostrar confirmación → guardar ──────────────────────────────
   Future<void> _enviar() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -127,6 +131,55 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
       return;
     }
 
+    // Advertir si no hay cliente seleccionado (idCliente es obligatorio para sincronizar)
+    if (_clienteSeleccionado == null) {
+      final continuar = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Sin cliente asignado'),
+          content: const Text(
+            'No seleccionaste un cliente existente.\n\n'
+            'El pedido se guardará localmente pero NO podrá sincronizarse con el servidor porque el idCliente es obligatorio.\n\n'
+            '¿Deseas continuar de todas formas?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Volver y seleccionar cliente'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFF59E0B)),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Guardar sin sincronizar'),
+            ),
+          ],
+        ),
+      );
+      if (continuar != true || !mounted) return;
+    }
+
+    // 1️⃣ Mostrar modal de confirmación con resumen completo
+    final confirmado = await mostrarConfirmacionPedido(
+      context:       context,
+      nombreCliente: _nombreCtrl.text.trim(),
+      cedula:        _cedulaCtrl.text.trim(),
+      telefono:      _telefonoCtrl.text.trim(),
+      email:         _emailCtrl.text.trim(),
+      direccion:     _direccionCtrl.text.trim(),
+      formaPago:     _formaPago,
+      items:         carrito.items,
+      descuento:     double.tryParse(_descuentoCtrl.text) ?? 0,
+      latitud:       _latitud,
+      longitud:      _longitud,
+      foto:          _foto,
+      observaciones: _obsCtrl.text.trim(),
+    );
+
+    // Si el usuario tocó "Revisar", no hacer nada
+    if (!confirmado || !mounted) return;
+
+    // 2️⃣ Guardar en SQLite + intentar sincronizar
     final ok = await context.read<PedidoProvider>().crearPedido(
       cliente:         _clienteSeleccionado,
       nombreCliente:   _nombreCtrl.text.trim(),
@@ -168,9 +221,9 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
         actions: [
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context);
-              Navigator.pop(context);
-              Navigator.pop(context);
+              Navigator.pop(context); // cerrar éxito
+              Navigator.pop(context); // volver a carrito
+              Navigator.pop(context); // volver a productos
             },
             child: const Text('Aceptar'),
           ),
@@ -225,13 +278,11 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
             const SizedBox(height: 12),
             _Campo(ctrl: _cedulaCtrl,    label: 'Cédula *',
                 hint: '1234567890',      icon: Icons.badge_outlined,
-                keyboardType: TextInputType.number,
-                validator: _requerido),
+                keyboardType: TextInputType.number, validator: _requerido),
             const SizedBox(height: 12),
             _Campo(ctrl: _telefonoCtrl,  label: 'Teléfono *',
                 hint: '0987654321',      icon: Icons.phone_outlined,
-                keyboardType: TextInputType.phone,
-                validator: _requerido),
+                keyboardType: TextInputType.phone, validator: _requerido),
             const SizedBox(height: 12),
             _Campo(ctrl: _emailCtrl,     label: 'Email',
                 hint: 'cliente@email.com', icon: Icons.email_outlined,
@@ -239,8 +290,7 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
             const SizedBox(height: 12),
             _Campo(ctrl: _direccionCtrl, label: 'Dirección *',
                 hint: 'Av. Principal y Calle',
-                icon: Icons.location_on_outlined,
-                validator: _requerido),
+                icon: Icons.location_on_outlined, validator: _requerido),
 
             const SizedBox(height: 24),
 
@@ -248,12 +298,12 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
             _Titulo('2. Forma de pago'),
             const SizedBox(height: 8),
             Row(children: [
-              _RadioPago(valor: 'efectivo',      grupo: _formaPago,
-                  label: 'Efectivo',       icon: Icons.payments_outlined,
+              _RadioPago(valor: 'efectivo', grupo: _formaPago,
+                  label: 'Efectivo', icon: Icons.payments_outlined,
                   onChanged: (v) => setState(() => _formaPago = v!)),
               const SizedBox(width: 12),
               _RadioPago(valor: 'transferencia', grupo: _formaPago,
-                  label: 'Transferencia',  icon: Icons.account_balance_outlined,
+                  label: 'Transferencia', icon: Icons.account_balance_outlined,
                   onChanged: (v) => setState(() => _formaPago = v!)),
             ]),
 
@@ -284,36 +334,28 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
             // GPS
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppTheme.border),
-              ),
+              decoration: BoxDecoration(color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.border)),
               child: Row(children: [
                 Icon(_latitud != null ? Icons.gps_fixed : Icons.gps_not_fixed,
                     color: _latitud != null ? AppTheme.success : AppTheme.textMedium),
                 const SizedBox(width: 10),
-                Expanded(
-                  child: _gpsLoading
-                      ? const Text('Obteniendo ubicación...',
-                          style: TextStyle(color: AppTheme.textMedium))
-                      : _latitud != null
-                          ? Text(
-                              'Lat: ${_latitud!.toStringAsFixed(6)}\nLon: ${_longitud!.toStringAsFixed(6)}',
-                              style: const TextStyle(fontSize: 12, color: AppTheme.textDark))
-                          : const Text('Ubicación no disponible',
-                              style: TextStyle(color: AppTheme.textMedium)),
-                ),
+                Expanded(child: _gpsLoading
+                    ? const Text('Obteniendo ubicación...',
+                        style: TextStyle(color: AppTheme.textMedium))
+                    : _latitud != null
+                        ? Text('Lat: ${_latitud!.toStringAsFixed(6)}\nLon: ${_longitud!.toStringAsFixed(6)}',
+                            style: const TextStyle(fontSize: 12, color: AppTheme.textDark))
+                        : const Text('Ubicación no disponible',
+                            style: TextStyle(color: AppTheme.textMedium))),
                 if (_gpsLoading)
                   const SizedBox(width: 18, height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: AppTheme.primary))
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary))
                 else
-                  TextButton(onPressed: _obtenerUbicacion,
-                      child: const Text('Reintentar')),
+                  TextButton(onPressed: _obtenerUbicacion, child: const Text('Reintentar')),
               ]),
             ),
-
             const SizedBox(height: 12),
 
             // Foto
@@ -325,23 +367,19 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                    color: _foto == null ? AppTheme.border : AppTheme.accent,
-                    width: _foto == null ? 1 : 2,
-                  ),
+                      color: _foto == null ? AppTheme.border : AppTheme.accent,
+                      width: _foto == null ? 1 : 2),
                 ),
                 child: _foto == null
-                    ? const Column(mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.camera_alt_outlined, size: 36,
-                              color: AppTheme.textLight),
-                          SizedBox(height: 8),
-                          Text('Tomar foto o elegir de galería',
-                              style: TextStyle(color: AppTheme.textMedium)),
-                        ])
+                    ? const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Icon(Icons.camera_alt_outlined, size: 36, color: AppTheme.textLight),
+                        SizedBox(height: 8),
+                        Text('Tomar foto o elegir de galería',
+                            style: TextStyle(color: AppTheme.textMedium)),
+                      ])
                     : ClipRRect(
                         borderRadius: BorderRadius.circular(9),
-                        child: Image.file(_foto!, fit: BoxFit.cover,
-                            width: double.infinity)),
+                        child: Image.file(_foto!, fit: BoxFit.cover, width: double.infinity)),
               ),
             ),
 
@@ -378,7 +416,7 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                     style: const TextStyle(color: AppTheme.errorColor)),
               ),
 
-            // Botón
+            // ── Botón principal ────────────────────────────────────────────
             SizedBox(
               height: 52,
               child: ElevatedButton.icon(
@@ -387,8 +425,8 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                     ? const SizedBox(width: 20, height: 20,
                         child: CircularProgressIndicator(
                             color: Colors.white, strokeWidth: 2.5))
-                    : const Icon(Icons.save),
-                label: Text(isLoading ? 'Guardando...' : 'Guardar pedido'),
+                    : const Icon(Icons.receipt_long),
+                label: Text(isLoading ? 'Guardando...' : 'Continuar con el pedido'),
               ),
             ),
             const SizedBox(height: 32),
@@ -398,7 +436,8 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
     );
   }
 
-  String? _requerido(String? v) => (v == null || v.isEmpty) ? 'Campo requerido' : null;
+  String? _requerido(String? v) =>
+      (v == null || v.isEmpty) ? 'Campo requerido' : null;
 }
 
 // ── Widgets auxiliares ────────────────────────────────────────────────────────

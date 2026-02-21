@@ -5,6 +5,7 @@ import 'package:tarea_bimestre/features/auth/providers/auth_provider.dart';
 import 'package:tarea_bimestre/features/auth/screens/login_screen.dart';
 import 'package:tarea_bimestre/features/carrito/providers/carrito_provider.dart';
 import 'package:tarea_bimestre/features/home/screens/home_screen.dart';
+import 'package:tarea_bimestre/features/pedidos/providers/pedidos_list_provider.dart';
 import 'package:tarea_bimestre/features/productos/providers/productos_provider.dart';
 
 void main() {
@@ -14,6 +15,7 @@ void main() {
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => ProductosProvider()),
         ChangeNotifierProvider(create: (_) => CarritoProvider()),
+        ChangeNotifierProvider(create: (_) => PedidosListProvider()),
       ],
       child: const MyApp(),
     ),
@@ -40,7 +42,6 @@ class MyApp extends StatelessWidget {
 
 class _AuthGate extends StatefulWidget {
   const _AuthGate();
-
   @override
   State<_AuthGate> createState() => _AuthGateState();
 }
@@ -57,15 +58,9 @@ class _AuthGateState extends State<_AuthGate> {
   @override
   Widget build(BuildContext context) {
     final status = context.watch<AuthProvider>().status;
-
-    // Usar if/else en lugar de switch expression para mayor compatibilidad
-    if (status == AuthStatus.authenticated) {
-      return const HomeScreen();
-    } else if (status == AuthStatus.unauthenticated) {
-      return const LoginScreen();
-    } else {
-      return const _SplashScreen();
-    }
+    if (status == AuthStatus.authenticated)   return const HomeScreen();
+    if (status == AuthStatus.unauthenticated) return const LoginScreen();
+    return const _SplashScreen();
   }
 }
 
@@ -76,37 +71,23 @@ class _SplashScreen extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: AppTheme.primary,
     body: Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Icon(
-              Icons.shopping_bag_outlined,
-              color: Colors.white,
-              size: 48,
-            ),
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(20),
           ),
-          const SizedBox(height: 24),
-          const Text(
-            'Registro de Pedidos',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 40),
-          const CircularProgressIndicator(
-            color: Colors.white,
-            strokeWidth: 2.5,
-          ),
-        ],
-      ),
+          child: const Icon(Icons.shopping_bag_outlined,
+              color: Colors.white, size: 48),
+        ),
+        const SizedBox(height: 24),
+        const Text('Registro de Pedidos',
+            style: TextStyle(color: Colors.white, fontSize: 22,
+                fontWeight: FontWeight.w600)),
+        const SizedBox(height: 40),
+        const CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+      ]),
     ),
   );
 }
