@@ -1,14 +1,15 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:tarea_bimestre/core/theme/app_theme.dart';
 import 'package:tarea_bimestre/features/carrito/providers/carrito_provider.dart';
 import 'package:tarea_bimestre/features/clientes/models/cliente_model.dart';
 import 'package:tarea_bimestre/features/clientes/widgets/selector_cliente_widget.dart';
 import 'package:tarea_bimestre/features/pedido/providers/pedido_provider.dart';
+import 'package:tarea_bimestre/features/pedido/screens/ubicacion_helper.dart';
 import 'package:tarea_bimestre/features/pedido/widgets/confirmacion_dialog.dart';
 import 'package:tarea_bimestre/features/pedido/widgets/resumen_carrito_widget.dart';
 
@@ -34,7 +35,8 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
   File?         _foto;
   double?       _latitud;
   double?       _longitud;
-  bool          _gpsLoading = false;
+  bool          _gpsLoading  = false;
+  UbicacionError? _gpsError;
 
   @override
   void initState() {
@@ -54,28 +56,46 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
     super.dispose();
   }
 
-  // ── GPS automático ────────────────────────────────────────────────────────
+  // ── GPS ───────────────────────────────────────────────────────────────────
   Future<void> _obtenerUbicacion() async {
-    setState(() => _gpsLoading = true);
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) { setState(() => _gpsLoading = false); return; }
-
-      LocationPermission perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) {
-        perm = await Geolocator.requestPermission();
-        if (perm == LocationPermission.denied) { setState(() => _gpsLoading = false); return; }
+    setState(() { _gpsLoading = true; _gpsError = null; });
+    final result = await obtenerUbicacion();
+    setState(() {
+      _gpsLoading = false;
+      if (result.ok) {
+        _latitud  = result.latitud;
+        _longitud = result.longitud;
+        _gpsError = null;
+      } else {
+        _gpsError = result.error;
       }
-      if (perm == LocationPermission.deniedForever) { setState(() => _gpsLoading = false); return; }
+    });
 
-      final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
-      setState(() {
-        _latitud    = pos.latitude;
-        _longitud   = pos.longitude;
-        _gpsLoading = false;
-      });
-    } catch (_) { setState(() => _gpsLoading = false); }
+    // Si el permiso está bloqueado permanentemente, ofrecer abrir ajustes
+    if (_gpsError == UbicacionError.permisoPermanente && mounted) {
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Permiso bloqueado'),
+          content: const Text(
+              'El permiso de ubicación está bloqueado. '
+              'Habilítalo en Ajustes > Aplicaciones > tarea_bimestre > Permisos.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                Geolocator.openAppSettings();
+              },
+              child: const Text('Abrir ajustes'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   // ── Foto ──────────────────────────────────────────────────────────────────
@@ -347,8 +367,11 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                     : _latitud != null
                         ? Text('Lat: ${_latitud!.toStringAsFixed(6)}\nLon: ${_longitud!.toStringAsFixed(6)}',
                             style: const TextStyle(fontSize: 12, color: AppTheme.textDark))
-                        : const Text('Ubicación no disponible',
-                            style: TextStyle(color: AppTheme.textMedium))),
+                        : Text(
+                            _gpsError != null
+                                ? mensajeUbicacionError(_gpsError!)
+                                : 'Ubicación no disponible',
+                            style: const TextStyle(color: AppTheme.textMedium, fontSize: 12))),
                 if (_gpsLoading)
                   const SizedBox(width: 18, height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary))
