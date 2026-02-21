@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:tarea_bimestre/core/theme/app_theme.dart';
 import 'package:tarea_bimestre/features/carrito/providers/carrito_provider.dart';
 import 'package:tarea_bimestre/features/clientes/models/cliente_model.dart';
+import 'package:tarea_bimestre/features/clientes/screens/qr_scanner_screen.dart';
 import 'package:tarea_bimestre/features/clientes/widgets/selector_cliente_widget.dart';
 import 'package:tarea_bimestre/features/pedido/providers/pedido_provider.dart';
 import 'package:tarea_bimestre/features/pedido/screens/ubicacion_helper.dart';
@@ -30,12 +31,12 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
   final _descuentoCtrl = TextEditingController(text: '0');
   final _obsCtrl       = TextEditingController();
 
-  ClienteModel? _clienteSeleccionado;
-  String        _formaPago  = 'efectivo';
-  File?         _foto;
-  double?       _latitud;
-  double?       _longitud;
-  bool          _gpsLoading  = false;
+  ClienteModel?   _clienteSeleccionado;
+  String          _formaPago  = 'efectivo';
+  File?           _foto;
+  double?         _latitud;
+  double?         _longitud;
+  bool            _gpsLoading = false;
   UbicacionError? _gpsError;
 
   @override
@@ -71,7 +72,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
       }
     });
 
-    // Si el permiso está bloqueado permanentemente, ofrecer abrir ajustes
     if (_gpsError == UbicacionError.permisoPermanente && mounted) {
       showDialog(
         context: context,
@@ -125,20 +125,45 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
     );
   }
 
+  // ── QR ────────────────────────────────────────────────────────────────────
+  Future<void> _escanearQr() async {
+    final cliente = await Navigator.push<ClienteModel>(
+      context,
+      MaterialPageRoute(builder: (_) => const QrScannerScreen()),
+    );
+    if (cliente != null && mounted) {
+      setState(() {
+        _clienteSeleccionado = cliente;
+        _nombreCtrl.text     = cliente.nombre;
+        _cedulaCtrl.text     = cliente.cedula;
+        _emailCtrl.text      = cliente.email;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Cliente encontrado: ${cliente.nombre}'),
+          backgroundColor: AppTheme.success,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   // ── Selector de cliente ───────────────────────────────────────────────────
   Future<void> _seleccionarCliente() async {
     final c = await mostrarSelectorCliente(context);
     if (c != null) {
       setState(() {
         _clienteSeleccionado = c;
-        _nombreCtrl.text   = c.nombre;
-        _cedulaCtrl.text   = c.cedula;
-        _emailCtrl.text    = c.email;
+        _nombreCtrl.text     = c.nombre;
+        _cedulaCtrl.text     = c.cedula;
+        _emailCtrl.text      = c.email;
       });
     }
   }
 
-  // ── Validar → mostrar confirmación → guardar ──────────────────────────────
+  // ── Enviar ────────────────────────────────────────────────────────────────
   Future<void> _enviar() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -151,35 +176,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
       return;
     }
 
-    // Advertir si no hay cliente seleccionado (idCliente es obligatorio para sincronizar)
-    if (_clienteSeleccionado == null) {
-      final continuar = await showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Sin cliente asignado'),
-          content: const Text(
-            'No seleccionaste un cliente existente.\n\n'
-            'El pedido se guardará localmente pero NO podrá sincronizarse con el servidor porque el idCliente es obligatorio.\n\n'
-            '¿Deseas continuar de todas formas?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Volver y seleccionar cliente'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFF59E0B)),
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Guardar sin sincronizar'),
-            ),
-          ],
-        ),
-      );
-      if (continuar != true || !mounted) return;
-    }
-
-    // 1️⃣ Mostrar modal de confirmación con resumen completo
     final confirmado = await mostrarConfirmacionPedido(
       context:       context,
       nombreCliente: _nombreCtrl.text.trim(),
@@ -196,10 +192,8 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
       observaciones: _obsCtrl.text.trim(),
     );
 
-    // Si el usuario tocó "Revisar", no hacer nada
     if (!confirmado || !mounted) return;
 
-    // 2️⃣ Guardar en SQLite + intentar sincronizar
     final ok = await context.read<PedidoProvider>().crearPedido(
       cliente:         _clienteSeleccionado,
       nombreCliente:   _nombreCtrl.text.trim(),
@@ -269,18 +263,38 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
             // ── 1. Cliente ─────────────────────────────────────────────────
             _Titulo('1. Datos del cliente'),
             const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _seleccionarCliente,
-              icon: const Icon(Icons.person_search),
-              label: Text(_clienteSeleccionado == null
-                  ? 'Buscar cliente existente'
-                  : 'Cliente: ${_clienteSeleccionado!.nombre}'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppTheme.primary,
-                side: const BorderSide(color: AppTheme.primary),
-                minimumSize: const Size(double.infinity, 48),
+
+            // Botones QR y Buscar cliente
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _escanearQr,
+                  icon: const Icon(Icons.qr_code_scanner),
+                  label: const Text('Leer QR'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.accent,
+                    side: const BorderSide(color: AppTheme.accent),
+                    minimumSize: const Size(0, 48),
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _seleccionarCliente,
+                  icon: const Icon(Icons.person_search),
+                  label: Text(_clienteSeleccionado == null
+                      ? 'Buscar cliente'
+                      : _clienteSeleccionado!.nombre.split(' ').first),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.primary,
+                    side: const BorderSide(color: AppTheme.primary),
+                    minimumSize: const Size(0, 48),
+                  ),
+                ),
+              ),
+            ]),
+
             const SizedBox(height: 8),
             Row(children: [
               const Expanded(child: Divider()),
@@ -292,6 +306,7 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
               const Expanded(child: Divider()),
             ]),
             const SizedBox(height: 8),
+
             _Campo(ctrl: _nombreCtrl,    label: 'Nombre completo *',
                 hint: 'Juan Pérez',      icon: Icons.person_outline,
                 validator: _requerido),
@@ -354,29 +369,40 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
             // GPS
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppTheme.border)),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.border),
+              ),
               child: Row(children: [
-                Icon(_latitud != null ? Icons.gps_fixed : Icons.gps_not_fixed,
-                    color: _latitud != null ? AppTheme.success : AppTheme.textMedium),
+                Icon(
+                  _latitud != null ? Icons.gps_fixed : Icons.gps_not_fixed,
+                  color: _latitud != null ? AppTheme.success : AppTheme.textMedium,
+                ),
                 const SizedBox(width: 10),
-                Expanded(child: _gpsLoading
+                Expanded(
+                  child: _gpsLoading
                     ? const Text('Obteniendo ubicación...',
                         style: TextStyle(color: AppTheme.textMedium))
                     : _latitud != null
-                        ? Text('Lat: ${_latitud!.toStringAsFixed(6)}\nLon: ${_longitud!.toStringAsFixed(6)}',
+                        ? Text(
+                            'Lat: ${_latitud!.toStringAsFixed(6)}\nLon: ${_longitud!.toStringAsFixed(6)}',
                             style: const TextStyle(fontSize: 12, color: AppTheme.textDark))
                         : Text(
                             _gpsError != null
                                 ? mensajeUbicacionError(_gpsError!)
                                 : 'Ubicación no disponible',
-                            style: const TextStyle(color: AppTheme.textMedium, fontSize: 12))),
+                            style: const TextStyle(color: AppTheme.textMedium, fontSize: 12)),
+                ),
                 if (_gpsLoading)
                   const SizedBox(width: 18, height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary))
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: AppTheme.primary))
                 else
-                  TextButton(onPressed: _obtenerUbicacion, child: const Text('Reintentar')),
+                  TextButton(
+                    onPressed: _obtenerUbicacion,
+                    child: const Text('Reintentar'),
+                  ),
               ]),
             ),
             const SizedBox(height: 12),
@@ -390,19 +416,24 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                      color: _foto == null ? AppTheme.border : AppTheme.accent,
-                      width: _foto == null ? 1 : 2),
+                    color: _foto == null ? AppTheme.border : AppTheme.accent,
+                    width: _foto == null ? 1 : 2,
+                  ),
                 ),
                 child: _foto == null
-                    ? const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        Icon(Icons.camera_alt_outlined, size: 36, color: AppTheme.textLight),
-                        SizedBox(height: 8),
-                        Text('Tomar foto o elegir de galería',
-                            style: TextStyle(color: AppTheme.textMedium)),
-                      ])
+                    ? const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.camera_alt_outlined,
+                              size: 36, color: AppTheme.textLight),
+                          SizedBox(height: 8),
+                          Text('Tomar foto o elegir de galería',
+                              style: TextStyle(color: AppTheme.textMedium)),
+                        ])
                     : ClipRRect(
                         borderRadius: BorderRadius.circular(9),
-                        child: Image.file(_foto!, fit: BoxFit.cover, width: double.infinity)),
+                        child: Image.file(_foto!,
+                            fit: BoxFit.cover, width: double.infinity)),
               ),
             ),
 
@@ -431,8 +462,9 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                 margin: const EdgeInsets.only(bottom: 16),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppTheme.errorColor.withOpacity(0.08),
-                  border: Border.all(color: AppTheme.errorColor.withOpacity(0.3)),
+                  color: AppTheme.errorColor.withValues(alpha: 0.08),
+                  border: Border.all(
+                      color: AppTheme.errorColor.withValues(alpha: 0.3)),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(prov.error,
@@ -449,7 +481,9 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                         child: CircularProgressIndicator(
                             color: Colors.white, strokeWidth: 2.5))
                     : const Icon(Icons.receipt_long),
-                label: Text(isLoading ? 'Guardando...' : 'Continuar con el pedido'),
+                label: Text(isLoading
+                    ? 'Guardando...'
+                    : 'Continuar con el pedido'),
               ),
             ),
             const SizedBox(height: 32),
@@ -482,14 +516,20 @@ class _Campo extends StatelessWidget {
   final List<TextInputFormatter>? inputFormatters;
 
   const _Campo({required this.ctrl, required this.label, required this.hint,
-      required this.icon, this.keyboardType, this.validator, this.inputFormatters});
+      required this.icon, this.keyboardType, this.validator,
+      this.inputFormatters});
 
   @override
   Widget build(BuildContext context) => TextFormField(
-    controller: ctrl, keyboardType: keyboardType,
-    inputFormatters: inputFormatters, validator: validator,
-    decoration: InputDecoration(labelText: label, hintText: hint,
-        prefixIcon: Icon(icon, color: AppTheme.textMedium, size: 20)),
+    controller: ctrl,
+    keyboardType: keyboardType,
+    inputFormatters: inputFormatters,
+    validator: validator,
+    decoration: InputDecoration(
+      labelText: label,
+      hintText: hint,
+      prefixIcon: Icon(icon, color: AppTheme.textMedium, size: 20),
+    ),
   );
 }
 
@@ -510,22 +550,23 @@ class _RadioPago extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
           decoration: BoxDecoration(
-            color: sel ? AppTheme.primary.withOpacity(0.08) : Colors.white,
+            color: sel
+                ? AppTheme.primary.withValues(alpha: 0.08)
+                : Colors.white,
             border: Border.all(
                 color: sel ? AppTheme.primary : AppTheme.border,
                 width: sel ? 1.8 : 1),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Row(children: [
-            Radio<String>(value: valor, groupValue: grupo, onChanged: onChanged,
-                activeColor: AppTheme.primary,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
             Icon(icon, size: 18,
                 color: sel ? AppTheme.primary : AppTheme.textMedium),
-            const SizedBox(width: 4),
+            const SizedBox(width: 6),
             Flexible(child: Text(label,
-                style: TextStyle(fontSize: 13,
-                    fontWeight: sel ? FontWeight.w600 : FontWeight.normal,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight:
+                        sel ? FontWeight.w600 : FontWeight.normal,
                     color: sel ? AppTheme.primary : AppTheme.textDark))),
           ]),
         ),

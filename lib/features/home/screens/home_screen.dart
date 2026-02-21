@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:tarea_bimestre/core/services/sync_service.dart';
 import 'package:tarea_bimestre/core/theme/app_theme.dart';
 import 'package:tarea_bimestre/features/auth/providers/auth_provider.dart';
@@ -20,11 +21,18 @@ class HomeScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Registro de Pedidos'),
         actions: [
+          // ── Botón Mi QR ───────────────────────────────────────────────────
+          IconButton(
+            icon: const Icon(Icons.qr_code),
+            tooltip: 'Mi QR',
+            onPressed: () => _mostrarQr(context, user?.idUsuario),
+          ),
           // ── Botón sincronizar ─────────────────────────────────────────────
           IconButton(
             icon: sync.isSyncing
                 ? const SizedBox(
-                    width: 20, height: 20,
+                    width: 20,
+                    height: 20,
                     child: CircularProgressIndicator(
                         color: Colors.white, strokeWidth: 2))
                 : const Icon(Icons.sync),
@@ -50,7 +58,8 @@ class HomeScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ── Banner de estado de sync ──────────────────────────────────
-            if (sync.status == SyncStatus.success || sync.status == SyncStatus.error)
+            if (sync.status == SyncStatus.success ||
+                sync.status == SyncStatus.error)
               _SyncBanner(sync: sync),
 
             // ── Tarjeta de bienvenida ─────────────────────────────────────
@@ -81,16 +90,15 @@ class HomeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                     decoration: BoxDecoration(
                       color: AppTheme.accent.withOpacity(0.85),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
                       user?.roles.join(', ') ?? '',
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 12),
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
                     ),
                   ),
                 ],
@@ -109,8 +117,8 @@ class HomeScreen extends StatelessWidget {
             const SizedBox(height: 16),
 
             _ModuleCard(
-              icon:     Icons.add_shopping_cart,
-              title:    'Nuevo pedido',
+              icon: Icons.add_shopping_cart,
+              title: 'Nuevo pedido',
               subtitle: 'Seleccionar productos y registrar pedido',
               onTap: () => Navigator.push(
                 context,
@@ -119,8 +127,8 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             _ModuleCard(
-              icon:     Icons.list_alt,
-              title:    'Mis pedidos',
+              icon: Icons.list_alt,
+              title: 'Mis pedidos',
               subtitle: 'Ver y sincronizar pedidos guardados',
               onTap: () => Navigator.push(
                 context,
@@ -133,8 +141,70 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  void _mostrarQr(BuildContext context, int? idUsuario) {
+    if (idUsuario == null) return;
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text(
+          'Mi QR',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+
+        // ── CONTENT (bien cerrado) ─────────────────────────
+        content: SizedBox(
+          width: 260,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 220,
+                height: 220,
+                child: QrImageView(
+                  data: '$idUsuario',
+                  version: QrVersions.auto,
+                  backgroundColor: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'ID: $idUsuario',
+                style: const TextStyle(
+                  color: AppTheme.textMedium,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Muestra este QR para que un vendedor\npueda registrar tu pedido.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppTheme.textLight,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // ── ACTIONS (correctamente ubicadas) ───────────────
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _sincronizar(BuildContext context) async {
-    final sync     = context.read<SyncService>();
+    final sync = context.read<SyncService>();
     final productos = context.read<ProductosProvider>();
 
     final ok = await sync.sincronizarProductos();
@@ -183,8 +253,7 @@ class _SyncBanner extends StatelessWidget {
           GestureDetector(
             onTap: sync.resetStatus,
             child: Icon(Icons.close,
-                size: 16,
-                color: isOk ? Colors.green : AppTheme.errorColor),
+                size: 16, color: isOk ? Colors.green : AppTheme.errorColor),
           ),
         ],
       ),
@@ -195,8 +264,8 @@ class _SyncBanner extends StatelessWidget {
 // ── Tarjeta de módulo ─────────────────────────────────────────────────────────
 class _ModuleCard extends StatelessWidget {
   final IconData icon;
-  final String   title;
-  final String   subtitle;
+  final String title;
+  final String subtitle;
   final VoidCallback onTap;
 
   const _ModuleCard({
@@ -208,48 +277,48 @@ class _ModuleCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-    color: Colors.white,
-    borderRadius: BorderRadius.circular(12),
-    child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-        decoration: BoxDecoration(
-          border: Border.all(color: AppTheme.border),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
           borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: AppTheme.primary.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: AppTheme.primary, size: 22),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+            decoration: BoxDecoration(
+              border: Border.all(color: AppTheme.border),
+              borderRadius: BorderRadius.circular(12),
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
-                          color: AppTheme.textDark)),
-                  const SizedBox(height: 2),
-                  Text(subtitle,
-                      style: const TextStyle(
-                          fontSize: 12.5, color: AppTheme.textMedium)),
-                ],
-              ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: AppTheme.primary, size: 22),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                              color: AppTheme.textDark)),
+                      const SizedBox(height: 2),
+                      Text(subtitle,
+                          style: const TextStyle(
+                              fontSize: 12.5, color: AppTheme.textMedium)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, color: AppTheme.textLight),
+              ],
             ),
-            const Icon(Icons.chevron_right, color: AppTheme.textLight),
-          ],
+          ),
         ),
-      ),
-    ),
-  );
+      );
 }
